@@ -1,0 +1,119 @@
+---
+title: 'PRACTICAL MACHINE LEARNING COURSE PROJECT'
+output: pdf_document
+---
+
+## Background Information
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement - a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, we will use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. The participants were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset). 
+
+## Data Source
+The training data for this project are available here:
+
+[https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv]()
+
+The test data are available here:
+
+[https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv]()
+
+The data for this project comes from this original source: http://groupware.les.inf.puc-rio.br/har. If you use the document you create for this class for any purpose please cite them as they have been very generous in allowing their data to be used for this kind of assignment.
+
+## Loading Libraries
+```{r, results = 'hide', message = FALSE, warning = FALSE}
+library(caret)
+library(rpart)
+library(randomForest)
+```
+
+## Obtaining Data
+We begin by reading both the csv files into two data frames.
+The process below would only involve storing the data in memory and not on disk.
+```{r, results = 'hide', message = FALSE, warning = FALSE}
+trainUrl <- "http://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+testUrl <- "http://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+
+pml_train <- read.csv("http://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+                      , na.strings=c("NA","#DIV/0!",""))
+pml_test <- read.csv("http://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+                     , na.strings=c("NA","#DIV/0!",""))
+
+dim(pml_train)
+dim(pml_test)
+```
+We see that the training set contains 19622 observations and 160 variables while the testing set has 20 observations and 160 variables.
+
+## Cleaning the Data
+We the proceed to first remove all the columns with missing values.
+```{r, results = 'hide', message = FALSE, warning = FALSE}
+pml_train <- pml_train[, colSums(is.na(pml_train)) == 0] 
+pml_test <- pml_test[, colSums(is.na(pml_test)) == 0] 
+```
+As the first 7 columns are extraneous to the accelerometer data which we are going to use for our predictions, they are also removed.
+```{r, results = 'hide', message = FALSE, warning = FALSE}
+pml_train <- pml_train[-c(1:7)]
+pml_test <- pml_test[-c(1:7)]
+```
+A check is then run to ensure that both the training and test set contains the same column names except for the **classe** and **problem_id** columns.
+```{r, results = 'hide', message = FALSE, warning = FALSE}
+all.equal(colnames(pml_train[1:length(pml_train)-1]),colnames(pml_test[1:length(pml_test)-1]))
+```
+The accelerometer data columns in both the training and test data sets are then all standardized as a numeric variable.
+```{r, results = 'hide', message = FALSE, warning = FALSE}
+for(i in c(1:(ncol(pml_train)-1))) {
+  pml_train[,i] = as.numeric(as.character(pml_train[,i]))
+  pml_test[,i] = as.numeric(as.character(pml_test[,i]))
+}
+```
+
+## Slicing the Data
+In order to help obtain the best model in terms of high Accuracy while minimizing Out of Sample Error, we will further split our training data set into a pure training data set(70%) and a validation data set (30%). A seed is also set to help ensure reproducibility.
+```{r, results = 'hide', message = FALSE, warning = FALSE}
+set.seed(901206) 
+inTrain <- createDataPartition(pml_train$classe, p=0.70, list=F)
+data_train <- pml_train[inTrain, ]
+data_cv <- pml_train[-inTrain, ]
+```
+
+## Model Creation
+#1. Decision Tree
+We will first attempt modeling the data using Decision Trees. 5-fold cross validation would be used when applying the algorithm.
+```{r, results = 'hide', message = FALSE, warning = FALSE}
+control <- trainControl(method="cv", 5)
+modelTree <- train(classe ~ ., data=data_train, method="rpart", trControl=control)
+modelTree
+```
+We then cross-validate our model to gauge it's accuracy and out of sampling error
+```{r, warning = FALSE}
+predictmodelTree <- predict(modelTree, data_cv)
+confusionMatrix(predictmodelTree, data_cv$classe)
+modelTree_accuracy <- postResample(predictmodelTree, data_cv$classe)
+modelTree_accuracy 
+modelTree_oose <- 1 - as.numeric(confusionMatrix(data_cv$classe, predictmodelTree)$overall[1])
+modelTree_oose
+```
+The low accuracy of 48.87% was clearly disappointing. This would mean that I could expect a considerable amount of my test-samples to be misclassified.
+
+#2. Random Forest
+Due to the poor performance of Decision Trees, we shall now attempt to model the data using Random Forests. We should expect Random Forests to perform better than Decision Trees as they are ensembles of decision trees that carries out random record and variable selection to avoid overfitting. Likewise, we shall also be using 5-fold cross validation when applying the algorithm.
+```{r, results = 'hide', message = FALSE, warning = FALSE}
+control <- trainControl(method="cv", 5)
+modelForest <- train(classe ~ ., data=data_train, method="rf", trControl=control)
+modelForest
+```
+We then cross-validate our model to gauge it's accuracy and out of sampling error
+```{r, warning = FALSE}
+predictmodelForest <- predict(modelForest, data_cv)
+confusionMatrix(predictmodelForest, data_cv$classe)
+modelForest_accuracy <- postResample(predictmodelForest, data_cv$classe)
+modelForest_accuracy 
+modelForest_oose <- 1 - as.numeric(confusionMatrix(data_cv$classe, predictmodelForest)$overall[1])
+modelForest_oose
+```
+As expected, Random Forests performs a lot better with an accuracy of 99.25% and an Out of Sample Error of 0.75%. As the test set is a sample size of 20, with an accuracy of 99.25%, we can expect that few or none of the test samples will be mis-classified.
+
+## Predicting for the Test Data Set
+We would now apply our Random Forest model on the original testing data set.
+```{r, warning = FALSE}
+result <- predict(modelForest, pml_test[, -length(names(pml_test))])
+result
+```
+
